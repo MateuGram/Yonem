@@ -96,6 +96,39 @@
   #drawSvg polygon{ fill: rgba(249,115,22,0.18); stroke: #f97316; stroke-width: 3; stroke-dasharray: 6 4; }
 
 /* ============================================================
+   МОДАЛЬНОЕ ОКНО (для вложения, переименования и т.п.)
+   ============================================================ */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  display: none; align-items: center; justify-content: center;
+  z-index: 2000; pointer-events: auto;
+  padding: 16px;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: #2a2a2a; border: 1px solid #444; border-radius: 10px;
+  padding: 18px; max-width: 90vw; width: 340px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+}
+.modal-title { font-size: 15px; margin-bottom: 6px; color: #fff; font-weight: 600; }
+.modal-subtitle { font-size: 12px; margin-bottom: 14px; color: #999; }
+.modal-box select,
+.modal-box input[type="text"] {
+  width: 100%; padding: 10px 12px; font-size: 14px; background: #1e1e1e;
+  color: #ddd; border: 1px solid #444; border-radius: 6px;
+  margin-bottom: 14px; font-family: inherit;
+  min-height: 42px;
+}
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-actions button {
+  min-height: 42px; padding: 8px 18px; font-size: 13px;
+  touch-action: manipulation;
+}
+.modal-empty {
+  padding: 20px 0; text-align: center; color: #888; font-size: 13px;
+}
+
+/* ============================================================
    МОБИЛЬНАЯ АДАПТАЦИЯ
    ============================================================ */
 #mobile-toggles {
@@ -310,7 +343,8 @@
     <button id="btn-undo" title="Отменить (Ctrl+Z)">↶</button>
     <button id="btn-redo" title="Повторить (Ctrl+Shift+Z)">↷</button>
     <span class="sep"></span>
-    <button id="btn-group" title="Создать пустую группу">📁 Группа</button>
+    <button id="btn-group" title="Создать группу (с выделенным, если есть)">📁 Группа</button>
+    <button id="btn-nest" title="Вложить в другой объект">📁⤵ Вложить</button>
     <button id="btn-ungroup" title="Отделить от родителя">⏏ Отделить</button>
     <button id="btn-duplicate" title="Дублировать с детьми (Ctrl+D)">⧉</button>
     <button id="btn-delete" class="danger" title="Удалить">🗑</button>
@@ -377,7 +411,7 @@
   </div>
 
   <div id="left" class="panel">
-    <div class="title">Сцена (перетаскивай для вложения)</div>
+    <div class="title">Сцена (тап для вложения)</div>
     <ul id="outliner"></ul>
   </div>
 
@@ -448,6 +482,19 @@
   </div>
 
   <div id="toast"></div>
+</div>
+
+<!-- Модальное окно для вложения -->
+<div id="nest-modal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title">Вложить объект в…</div>
+    <div class="modal-subtitle" id="nest-info">Выбери родителя из списка</div>
+    <select id="nest-target"></select>
+    <div class="modal-actions">
+      <button id="nest-cancel">Отмена</button>
+      <button id="nest-confirm" class="accent">Вложить</button>
+    </div>
+  </div>
 </div>
 
 <svg id="drawSvg" width="100%" height="100%" style="position:fixed;top:0;left:0;pointer-events:none;z-index:100;"></svg>
@@ -593,7 +640,6 @@ document.addEventListener('pointerdown', (e) => {
   if (tl && tl.contains(e.target)) return;
   if (tr && tr.contains(e.target)) return;
   if (tt && tt.contains(e.target)) return;
-  // Не закрываем subtoolbar при клике по нему
   const st = document.getElementById('subtoolbar');
   if (st && st.contains(e.target)) return;
   if (left) left.classList.remove('open');
@@ -675,6 +721,11 @@ function isDescendantOf(node, ancestor) {
   let p = node;
   while (p) { if (p === ancestor) return true; p = p.parent; }
   return false;
+}
+function getDepthInRoot(obj) {
+  let d = 0, p = obj;
+  while (p.parent && p.parent !== root) { d++; p = p.parent; }
+  return d;
 }
 
 function select(obj) {
@@ -830,6 +881,94 @@ function stripWrappersInPlace(sceneRoot) {
     }
   }
   return total;
+}
+
+// ============================================================
+//  МОДАЛЬНОЕ ОКНО «Вложить»
+// ============================================================
+const nestModal = document.getElementById('nest-modal');
+const nestTarget = document.getElementById('nest-target');
+const nestInfo = document.getElementById('nest-info');
+
+function openNestModal() {
+  if (!selected) { toast('Сначала выдели объект', 'err'); return; }
+
+  // Собираем кандидатов: все объекты, кроме выделенного и его потомков
+  const candidates = [];
+  root.traverse(c => {
+    if (c === root) return;
+    if (c === selected) return;
+    if (isDescendantOf(c, selected)) return;
+    candidates.push(c);
+  });
+
+  if (candidates.length === 0) {
+    toast('Нет подходящих родителей. Создай новую группу 📁', 'info', 3500);
+    return;
+  }
+
+  nestTarget.innerHTML = '';
+  // Первой опцией — новая группа (создадим на лету)
+  const optNew = document.createElement('option');
+  optNew.value = '__new_group__';
+  optNew.textContent = '✨ Новая группа';
+  nestTarget.appendChild(optNew);
+
+  for (const c of candidates) {
+    const opt = document.createElement('option');
+    opt.value = c.uuid;
+    const depth = getDepthInRoot(c);
+    const prefix = depth > 0 ? '   '.repeat(depth) + '↳ ' : '';
+    opt.textContent = prefix + (c.type === 'Group' ? '📁 ' : '▪ ') + (c.name || '(без имени)');
+    nestTarget.appendChild(opt);
+  }
+
+  nestInfo.textContent = `Вкладываем: «${selected.name || '(без имени)'}»`;
+  nestModal.classList.add('show');
+}
+
+document.getElementById('nest-confirm').onclick = () => {
+  if (!selected) { nestModal.classList.remove('show'); return; }
+  const uuid = nestTarget.value;
+
+  if (uuid === '__new_group__') {
+    // Создаём новую группу и вкладываем
+    pushHistory();
+    const g = new THREE.Group();
+    g.name = uniqueName('Группа');
+    root.add(g);
+    reparentTo(selected, g);
+    nestModal.classList.remove('show');
+    toast(`📁 Создана группа «${g.name}» с объектом`, 'ok', 2000);
+    return;
+  }
+
+  const target = root.getObjectByProperty('uuid', uuid);
+  if (target) {
+    reparentTo(selected, target);
+    toast(`📁 Вложено в «${target.name}»`, 'ok', 1800);
+  }
+  nestModal.classList.remove('show');
+};
+document.getElementById('nest-cancel').onclick = () => nestModal.classList.remove('show');
+nestModal.addEventListener('pointerdown', e => {
+  if (e.target === nestModal) nestModal.classList.remove('show');
+});
+
+// Вложение с сохранением мировой трансформации
+function reparentTo(obj, newParent) {
+  pushHistory();
+  obj.updateWorldMatrix(true, false);
+  const worldMat = obj.matrixWorld.clone();
+  if (obj.parent) obj.parent.remove(obj);
+  newParent.add(obj);
+  newParent.updateWorldMatrix(true, false);
+  const parentInv = new THREE.Matrix4().copy(newParent.matrixWorld).invert();
+  const localMat = parentInv.multiply(worldMat);
+  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  localMat.decompose(pos, quat, scl);
+  obj.position.copy(pos); obj.quaternion.copy(quat); obj.scale.copy(scl);
+  refreshOutliner();
 }
 
 // ============================================================
@@ -1636,29 +1775,14 @@ function refreshOutliner() {
         li.classList.remove('drag-over');
         if (!draggedObj || draggedObj === obj) return;
         if (isDescendantOf(obj, draggedObj)) return;
-        reparentObject(draggedObj, obj);
+        reparentTo(draggedObj, obj);
+        toast(`↳ Вложено в «${obj.name}»`, 'ok', 1500);
       });
       outliner.appendChild(li);
       if (obj.children.length > 0) addItems(obj, depth + 1);
     }
   }
   addItems(root, 0);
-}
-
-function reparentObject(obj, newParent) {
-  pushHistory();
-  obj.updateWorldMatrix(true, false);
-  const worldMat = obj.matrixWorld.clone();
-  if (obj.parent) obj.parent.remove(obj);
-  newParent.add(obj);
-  newParent.updateWorldMatrix(true, false);
-  const parentInv = new THREE.Matrix4().copy(newParent.matrixWorld).invert();
-  const localMat = parentInv.multiply(worldMat);
-  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
-  localMat.decompose(pos, quat, scl);
-  obj.position.copy(pos); obj.quaternion.copy(quat); obj.scale.copy(scl);
-  refreshOutliner();
-  toast(`↳ Вложено в «${newParent.name}»`, 'ok', 1500);
 }
 
 // ============================================================
@@ -1722,7 +1846,6 @@ $('p-name').addEventListener('input', e => {
   if (selected) selected.scale.setComponent(i, parseFloat(e.target.value) || 0.01);
 }));
 
-// Цвет + HEX-поле
 function syncHexFromColor() {
   const hex = $('p-color').value.toUpperCase();
   $('p-hex').value = hex;
@@ -1734,7 +1857,6 @@ $('p-color').addEventListener('input', e => {
   syncHexFromColor();
 });
 
-// Ввод HEX руками
 $('p-hex').addEventListener('input', e => {
   let v = e.target.value.trim();
   if (!v) return;
@@ -1748,7 +1870,6 @@ $('p-hex').addEventListener('input', e => {
   }
 });
 
-// Автовосстановление решётки при blur
 $('p-hex').addEventListener('blur', e => {
   if (!selected) return;
   const mat = Array.isArray(selected.material) ? selected.material[0] : selected.material;
@@ -1757,7 +1878,6 @@ $('p-hex').addEventListener('blur', e => {
   }
 });
 
-// Кнопка копирования
 $('p-hex-copy').addEventListener('click', async () => {
   let v = $('p-hex').value.trim();
   if (!v) v = $('p-color').value;
@@ -1902,14 +2022,35 @@ $('btn-undo').onclick = undo;
 $('btn-redo').onclick = redo;
 updateUndoButtons();
 
+// УМНАЯ КНОПКА «Группа» — если что-то выделено, вкладываем в новую группу
 $('btn-group').onclick = () => {
   pushHistory();
   const g = new THREE.Group();
   g.name = uniqueName('Группа');
   root.add(g);
-  select(g);
-  toast(`📁 Создана группа «${g.name}»`, 'ok');
+  if (selected && selected.parent === root) {
+    const obj = selected;
+    obj.updateWorldMatrix(true, false);
+    const worldMat = obj.matrixWorld.clone();
+    obj.parent.remove(obj);
+    g.add(obj);
+    g.updateWorldMatrix(true, false);
+    const parentInv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+    const localMat = parentInv.multiply(worldMat);
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+    localMat.decompose(pos, quat, scl);
+    obj.position.copy(pos); obj.quaternion.copy(quat); obj.scale.copy(scl);
+    select(g);
+    toast(`📁 «${obj.name}» → в новую группу`, 'ok', 1800);
+  } else {
+    select(g);
+    toast(`📁 Создана группа «${g.name}»`, 'ok');
+  }
+  refreshOutliner();
 };
+
+// Кнопка «Вложить» — модальное окно
+$('btn-nest').onclick = openNestModal;
 
 $('btn-ungroup').onclick = () => {
   if (!selected) { toast('Сначала выдели объект', 'err'); return; }
@@ -2252,6 +2393,7 @@ addEventListener('keydown', (e) => {
     clearCutPlanePreview();
     clearShapePreview();
     if (lineStart) { lineStart = null; svg.innerHTML = ''; }
+    nestModal.classList.remove('show');
   }
 });
 
