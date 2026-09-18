@@ -107,6 +107,7 @@
   justify-content: space-between;
   pointer-events: none;
   z-index: 200;
+  gap: 8px;
 }
 #mobile-toggles button {
   pointer-events: auto;
@@ -124,6 +125,10 @@
   background: #4a90e2;
   border-color: #4a90e2;
   color: #fff;
+}
+#toggle-tools {
+  margin-left: auto;
+  margin-right: 8px;
 }
 
 @media (max-width: 900px) {
@@ -169,10 +174,15 @@
   #subtoolbar {
     top: auto;
     bottom: 70px;
-    max-width: calc(100vw - 16px);
+    left: 8px;
+    right: 8px;
+    transform: none;
+    max-width: none;
     padding: 6px;
     gap: 4px;
     border-radius: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
   }
   #subtoolbar button {
     min-height: 42px;
@@ -279,6 +289,7 @@
 <div id="ui">
   <div id="mobile-toggles">
     <button id="toggle-left" title="Сцена">☰</button>
+    <button id="toggle-tools" title="Инструменты">✂</button>
     <button id="toggle-right" title="Свойства">⚙</button>
   </div>
 
@@ -562,6 +573,13 @@ document.getElementById('toggle-right').addEventListener('click', (e) => {
   document.getElementById('toggle-right').classList.toggle('active', !wasOpen);
   document.getElementById('toggle-left').classList.remove('active');
 });
+document.getElementById('toggle-tools').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const st = document.getElementById('subtoolbar');
+  const wasOpen = st.classList.contains('show');
+  st.classList.toggle('show');
+  document.getElementById('toggle-tools').classList.toggle('active', !wasOpen);
+});
 
 document.addEventListener('pointerdown', (e) => {
   if (!isMobileDevice) return;
@@ -569,10 +587,15 @@ document.addEventListener('pointerdown', (e) => {
   const right = document.getElementById('right');
   const tl = document.getElementById('toggle-left');
   const tr = document.getElementById('toggle-right');
+  const tt = document.getElementById('toggle-tools');
   if (left && left.contains(e.target)) return;
   if (right && right.contains(e.target)) return;
   if (tl && tl.contains(e.target)) return;
   if (tr && tr.contains(e.target)) return;
+  if (tt && tt.contains(e.target)) return;
+  // Не закрываем subtoolbar при клике по нему
+  const st = document.getElementById('subtoolbar');
+  if (st && st.contains(e.target)) return;
   if (left) left.classList.remove('open');
   if (right) right.classList.remove('open');
   if (tl) tl.classList.remove('active');
@@ -1741,7 +1764,6 @@ $('p-hex-copy').addEventListener('click', async () => {
   if (!v.startsWith('#')) v = '#' + v;
   v = v.toUpperCase();
 
-  // 1) Современный Clipboard API
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(v);
@@ -1750,7 +1772,6 @@ $('p-hex-copy').addEventListener('click', async () => {
     }
   } catch (e) {}
 
-  // 2) Fallback через execCommand — работает и на file://
   try {
     const tmp = document.createElement('textarea');
     tmp.value = v;
@@ -1769,7 +1790,6 @@ $('p-hex-copy').addEventListener('click', async () => {
       throw new Error('execCommand copy failed');
     }
   } catch (e) {
-    // 3) Не получилось — показываем выделенным, чтобы скопировать вручную
     $('p-hex').focus();
     $('p-hex').select();
     toast(`Не удалось скопировать автоматически. Код: ${v} — скопируй вручную`, 'info', 5000);
