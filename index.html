@@ -96,7 +96,7 @@
   #drawSvg polygon{ fill: rgba(249,115,22,0.18); stroke: #f97316; stroke-width: 3; stroke-dasharray: 6 4; }
 
 /* ============================================================
-   МОДАЛЬНОЕ ОКНО (для вложения, переименования и т.п.)
+   МОДАЛЬНОЕ ОКНО
    ============================================================ */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.65);
@@ -123,9 +123,6 @@
 .modal-actions button {
   min-height: 42px; padding: 8px 18px; font-size: 13px;
   touch-action: manipulation;
-}
-.modal-empty {
-  padding: 20px 0; text-align: center; color: #888; font-size: 13px;
 }
 
 /* ============================================================
@@ -484,7 +481,6 @@
   <div id="toast"></div>
 </div>
 
-<!-- Модальное окно для вложения -->
 <div id="nest-modal" class="modal-overlay">
   <div class="modal-box">
     <div class="modal-title">Вложить объект в…</div>
@@ -658,8 +654,11 @@ orbit.maxPolarAngle = Math.PI / 2 - 0.02;
 orbit.enablePan = true;
 orbit.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
+// ============================================================
+//  TRANSFORM CONTROLS — гизмо
+// ============================================================
 const tcontrols = new TransformControls(camera, renderer.domElement);
-tcontrols.setSize(0.85);
+tcontrols.setSize(isMobileDevice ? 1.5 : 0.85);
 scene.add(tcontrols.getHelper ? tcontrols.getHelper() : tcontrols);
 
 let wasDragging = false;
@@ -669,6 +668,23 @@ tcontrols.addEventListener('dragging-changed', e => {
   wasDragging = e.value;
 });
 tcontrols.addEventListener('objectChange', () => updatePropsFromSelection());
+
+// ⚡ ГЛАВНОЕ ИСПРАВЛЕНИЕ ДЛЯ ТЕЛЕФОНА:
+// Ловим pointerdown в capture-фазе, до того как OrbitControls увидит касание.
+// Если палец попал на гизмо — tcontrols.axis !== null — жёстко отключаем Orbit.
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (tcontrols.axis) {
+    orbit.enabled = false;
+  }
+}, true);  // capture: true — срабатывает раньше
+
+tcontrols.addEventListener('mouseDown', () => {
+  orbit.enabled = false;
+});
+tcontrols.addEventListener('mouseUp', () => {
+  // Небольшая задержка, чтобы OrbitControls не «схватил» хвост движения
+  setTimeout(() => { orbit.enabled = true; }, 50);
+});
 
 const grid = new THREE.GridHelper(40, 40, 0x555555, 0x2a2a2a);
 grid.material.transparent = true; grid.material.opacity = 0.9;
@@ -893,7 +909,6 @@ const nestInfo = document.getElementById('nest-info');
 function openNestModal() {
   if (!selected) { toast('Сначала выдели объект', 'err'); return; }
 
-  // Собираем кандидатов: все объекты, кроме выделенного и его потомков
   const candidates = [];
   root.traverse(c => {
     if (c === root) return;
@@ -908,7 +923,6 @@ function openNestModal() {
   }
 
   nestTarget.innerHTML = '';
-  // Первой опцией — новая группа (создадим на лету)
   const optNew = document.createElement('option');
   optNew.value = '__new_group__';
   optNew.textContent = '✨ Новая группа';
@@ -932,7 +946,6 @@ document.getElementById('nest-confirm').onclick = () => {
   const uuid = nestTarget.value;
 
   if (uuid === '__new_group__') {
-    // Создаём новую группу и вкладываем
     pushHistory();
     const g = new THREE.Group();
     g.name = uniqueName('Группа');
@@ -955,7 +968,6 @@ nestModal.addEventListener('pointerdown', e => {
   if (e.target === nestModal) nestModal.classList.remove('show');
 });
 
-// Вложение с сохранением мировой трансформации
 function reparentTo(obj, newParent) {
   pushHistory();
   obj.updateWorldMatrix(true, false);
@@ -2022,7 +2034,6 @@ $('btn-undo').onclick = undo;
 $('btn-redo').onclick = redo;
 updateUndoButtons();
 
-// УМНАЯ КНОПКА «Группа» — если что-то выделено, вкладываем в новую группу
 $('btn-group').onclick = () => {
   pushHistory();
   const g = new THREE.Group();
@@ -2049,7 +2060,6 @@ $('btn-group').onclick = () => {
   refreshOutliner();
 };
 
-// Кнопка «Вложить» — модальное окно
 $('btn-nest').onclick = openNestModal;
 
 $('btn-ungroup').onclick = () => {
